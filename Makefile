@@ -1,5 +1,12 @@
 PROJECT := caffe
 
+TOOLCHAIN := arm-xilinx-linux-gnueabi-
+CC := $(TOOLCHAIN)gcc
+TOOLCHAIN_CXX := $(TOOLCHAIN)g++
+AR := $(TOOLCHAIN)ar
+LD := $(TOOLCHAIN)ld
+CXX := sds++ -sds-pf zed
+
 CONFIG_FILE := Makefile.config
 # Explicitly check for the config file, otherwise make -k will proceed anyway.
 ifeq ($(wildcard $(CONFIG_FILE)),)
@@ -252,14 +259,15 @@ else ifeq ($(UNAME), Darwin)
 	OSX_MINOR_VERSION := $(shell sw_vers -productVersion | cut -f 2 -d .)
 endif
 
+
 # Linux
 ifeq ($(LINUX), 1)
 	CXX ?= /usr/bin/g++
-	GCCVERSION := $(shell $(CXX) -dumpversion | cut -f1,2 -d.)
+	# GCCVERSION := $(shell $(CXX) -dumpversion | cut -f1,2 -d.)
 	# older versions of gcc are too dumb to build boost with -Wuninitalized
-	ifeq ($(shell echo | awk '{exit $(GCCVERSION) < 4.6;}'), 1)
-		WARNINGS += -Wno-uninitialized
-	endif
+	# ifeq ($(shell echo | awk '{exit $(GCCVERSION) < 4.6;}'), 1)
+	#	WARNINGS += -Wno-uninitialized
+	# endif
 	# boost::thread is reasonably called boost_thread (compare OS X)
 	# We will also explicitly add stdc++ to the link target.
 	LIBRARIES += boost_thread stdc++
@@ -305,14 +313,14 @@ ifdef CUSTOM_CXX
 endif
 
 # Static linking
-ifneq (,$(findstring clang++,$(CXX)))
-	STATIC_LINK_COMMAND := -Wl,-force_load $(STATIC_NAME)
-else ifneq (,$(findstring g++,$(CXX)))
-	STATIC_LINK_COMMAND := -Wl,--whole-archive $(STATIC_NAME) -Wl,--no-whole-archive
-else
-  # The following line must not be indented with a tab, since we are not inside a target
-  $(error Cannot static link with the $(CXX) compiler)
-endif
+# ifneq (,$(findstring clang++,$(CXX)))
+# 	STATIC_LINK_COMMAND := -Wl,-force_load $(STATIC_NAME)
+# else ifneq (,$(findstring g++,$(CXX)))
+# 	STATIC_LINK_COMMAND := -Wl,--whole-archive $(STATIC_NAME) -Wl,--no-whole-archive
+# else
+#   # The following line must not be indented with a tab, since we are not inside a target
+#   $(error Cannot static link with the $(CXX) compiler)
+# endif
 
 # Debugging
 ifeq ($(DEBUG), 1)
@@ -359,41 +367,7 @@ ifeq ($(WITH_PYTHON_LAYER), 1)
 endif
 
 # BLAS configuration (default = ATLAS)
-BLAS ?= atlas
-ifeq ($(BLAS), mkl)
-	# MKL
-	LIBRARIES += mkl_rt
-	COMMON_FLAGS += -DUSE_MKL
-	MKLROOT ?= /opt/intel/mkl
-	BLAS_INCLUDE ?= $(MKLROOT)/include
-	BLAS_LIB ?= $(MKLROOT)/lib $(MKLROOT)/lib/intel64
-else ifeq ($(BLAS), open)
-	# OpenBLAS
-	LIBRARIES += openblas
-else
-	# ATLAS
-	ifeq ($(LINUX), 1)
-		ifeq ($(BLAS), atlas)
-			# Linux simply has cblas and atlas
-			LIBRARIES += cblas atlas
-		endif
-	else ifeq ($(OSX), 1)
-		# OS X packages atlas as the vecLib framework
-		LIBRARIES += cblas
-		# 10.10 has accelerate while 10.9 has veclib
-		XCODE_CLT_VER := $(shell pkgutil --pkg-info=com.apple.pkg.CLTools_Executables | grep 'version' | sed 's/[^0-9]*\([0-9]\).*/\1/')
-		XCODE_CLT_GEQ_6 := $(shell [ $(XCODE_CLT_VER) -gt 5 ] && echo 1)
-		ifeq ($(XCODE_CLT_GEQ_6), 1)
-			BLAS_INCLUDE ?= /System/Library/Frameworks/Accelerate.framework/Versions/Current/Frameworks/vecLib.framework/Headers/
-			LDFLAGS += -framework Accelerate
-		else
-			BLAS_INCLUDE ?= /System/Library/Frameworks/vecLib.framework/Versions/Current/Headers/
-			LDFLAGS += -framework vecLib
-		endif
-	endif
-endif
-INCLUDE_DIRS += $(BLAS_INCLUDE)
-LIBRARY_DIRS += $(BLAS_LIB)
+LIBRARIES += openblas
 
 LIBRARY_DIRS += $(LIB_BUILD_DIR)
 
@@ -437,6 +411,10 @@ ifneq ($(MATLAB_DIR),)
 endif
 
 ##############################
+# 3rdparty libraries
+##############################
+
+##############################
 # Define build targets
 ##############################
 .PHONY: all lib test clean docs linecount lint lintclean tools examples $(DIST_ALIASES) \
@@ -444,6 +422,8 @@ endif
 	superclean supercleanlist supercleanfiles warn everything
 
 all: lib tools examples
+
+sds: lib
 
 lib: $(STATIC_NAME) $(DYNAMIC_NAME)
 
@@ -596,7 +576,7 @@ $(TEST_ALL_BIN): $(TEST_MAIN_SRC) $(TEST_OBJS) $(GTEST_OBJ) \
 		-o $@ $(LINKFLAGS) $(LDFLAGS) -l$(LIBRARY_NAME) -Wl,-rpath,$(ORIGIN)/../lib
 
 $(TEST_CU_BINS): $(TEST_BIN_DIR)/%.testbin: $(TEST_CU_BUILD_DIR)/%.o \
-	$(GTEST_OBJ) | $(DYNAMIC_NAME) $(TEST_BIN_DIR)
+	$(GTEST_OBJTOOLCHAIN_) | $(DYNAMIC_NAME) $(TEST_BIN_DIR)
 	@ echo LD $<
 	$(Q)$(CXX) $(TEST_MAIN_SRC) $< $(GTEST_OBJ) \
 		-o $@ $(LINKFLAGS) $(LDFLAGS) -l$(LIBRARY_NAME) -Wl,-rpath,$(ORIGIN)/../lib
@@ -612,9 +592,14 @@ $(TOOL_BUILD_DIR)/%: $(TOOL_BUILD_DIR)/%.bin | $(TOOL_BUILD_DIR)
 	@ $(RM) $@
 	@ ln -s $(notdir $<) $@
 
+sdcaffe: .build_release/tools/caffe.o | $(DYNAMIC_NAME)
+	@ echo SDCXX -o $@
+	$(Q)$(SDCXX) $< -o $@ $(LINKFLAGS) -l$(LIBRARY_NAME) $(LDFLAGS) \
+		-Wl,-rpath,$(ORIGIN)/../lib
+
 $(TOOL_BINS): %.bin : %.o | $(DYNAMIC_NAME)
 	@ echo CXX/LD -o $@
-	$(Q)$(CXX) $< -o $@ $(LINKFLAGS) -l$(LIBRARY_NAME) $(LDFLAGS) \
+	$(Q)$(TOOLCHAIN_CXX) $< -o $@ $(LINKFLAGS) -l$(LIBRARY_NAME) $(LDFLAGS) \
 		-Wl,-rpath,$(ORIGIN)/../lib
 
 $(EXAMPLE_BINS): %.bin : %.o | $(DYNAMIC_NAME)

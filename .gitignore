@@ -93,3 +93,7 @@ LOCK
 LOG*
 CURRENT
 MANIFEST-*
+
+sd_card
+_sds
+*.bit
