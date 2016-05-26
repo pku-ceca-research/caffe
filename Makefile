@@ -1,18 +1,48 @@
 PROJECT := caffe
 
-TOOLCHAIN := arm-xilinx-linux-gnueabi-
-CC := $(TOOLCHAIN)gcc
-TOOLCHAIN_CXX := $(TOOLCHAIN)g++
-AR := $(TOOLCHAIN)ar
-LD := $(TOOLCHAIN)ld
-CXX := sds++ -sds-pf zed
+# Only for SDS platforms
+SDS ?= 0
+HW ?= 0
+PLATFORM := zed
+TARGET_OS := linux
+HARDWARE := sw
+ifeq ($(HW), 1)
+HARDWARE := hw
+endif
 
-CONFIG_FILE := Makefile.config
+ifeq ($(SDS), 0)
+PLATFORM := cpu
+CONFIG_SUFFIX := .$(PLATFORM)
+endif
+
+CONFIG_FILE := Makefile.config$(CONFIG_SUFFIX)
 # Explicitly check for the config file, otherwise make -k will proceed anyway.
 ifeq ($(wildcard $(CONFIG_FILE)),)
 $(error $(CONFIG_FILE) not found. See $(CONFIG_FILE).example.)
 endif
 include $(CONFIG_FILE)
+
+USE_SDS ?= 1
+ifeq ($(SDS), 1)
+TOOLCHAIN := arm-xilinx-linux-gnueabi-
+CC := $(TOOLCHAIN)gcc
+CXX := $(TOOLCHAIN)g++
+AR := $(TOOLCHAIN)ar
+LD := $(TOOLCHAIN)ld
+CXXFLAGS += -Wno-unused-local-typedefs
+ifeq ($(USE_SDS), 1)
+CXXFLAGS += -DSDS
+endif
+endif
+
+ifeq ($(USE_SDS), 1)
+ACCEL := accel
+ACCEL_VERSION := 1.0.0
+ACCEL_SHORT_NAME := $(ACCEL)-$(PLATFORM)-$(TARGET_OS)-$(HARDWARE)
+ACCEL_LIB_NAME := lib$(ACCEL_SHORT_NAME)
+ACCEL_NAME := $(ACCEL_SHORT_NAME).so.$(ACCEL_VERSION)
+LIBRARIES += $(ACCEL_SHORT_NAME)
+endif
 
 BUILD_DIR_LINK := $(BUILD_DIR)
 ifeq ($(RELEASE_BUILD_DIR),)
@@ -263,11 +293,11 @@ endif
 # Linux
 ifeq ($(LINUX), 1)
 	CXX ?= /usr/bin/g++
-	# GCCVERSION := $(shell $(CXX) -dumpversion | cut -f1,2 -d.)
+	GCCVERSION := $(shell $(CXX) -dumpversion | cut -f1,2 -d.)
 	# older versions of gcc are too dumb to build boost with -Wuninitalized
-	# ifeq ($(shell echo | awk '{exit $(GCCVERSION) < 4.6;}'), 1)
-	#	WARNINGS += -Wno-uninitialized
-	# endif
+	ifeq ($(shell echo | awk '{exit $(GCCVERSION) < 4.6;}'), 1)
+		WARNINGS += -Wno-uninitialized
+	 endif
 	# boost::thread is reasonably called boost_thread (compare OS X)
 	# We will also explicitly add stdc++ to the link target.
 	LIBRARIES += boost_thread stdc++
@@ -546,7 +576,7 @@ $(DYNAMIC_NAME): $(OBJS) | $(LIB_BUILD_DIR)
 
 $(STATIC_NAME): $(OBJS) | $(LIB_BUILD_DIR)
 	@ echo AR -o $@
-	$(Q)ar rcs $@ $(OBJS)
+	$(Q)$(AR) rcs $@ $(OBJS)
 
 $(BUILD_DIR)/%.o: %.cpp | $(ALL_BUILD_DIRS)
 	@ echo CXX $<
@@ -592,14 +622,9 @@ $(TOOL_BUILD_DIR)/%: $(TOOL_BUILD_DIR)/%.bin | $(TOOL_BUILD_DIR)
 	@ $(RM) $@
 	@ ln -s $(notdir $<) $@
 
-sdcaffe: .build_release/tools/caffe.o | $(DYNAMIC_NAME)
-	@ echo SDCXX -o $@
-	$(Q)$(SDCXX) $< -o $@ $(LINKFLAGS) -l$(LIBRARY_NAME) $(LDFLAGS) \
-		-Wl,-rpath,$(ORIGIN)/../lib
-
 $(TOOL_BINS): %.bin : %.o | $(DYNAMIC_NAME)
 	@ echo CXX/LD -o $@
-	$(Q)$(TOOLCHAIN_CXX) $< -o $@ $(LINKFLAGS) -l$(LIBRARY_NAME) $(LDFLAGS) \
+	$(Q)$(CXX) $< -o $@ $(LINKFLAGS) -l$(LIBRARY_NAME) $(LDFLAGS) \
 		-Wl,-rpath,$(ORIGIN)/../lib
 
 $(EXAMPLE_BINS): %.bin : %.o | $(DYNAMIC_NAME)

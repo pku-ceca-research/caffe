@@ -1,4 +1,4 @@
-#!/usr/bin/env sh
+#!/bin/sh
 # This script converts the mnist data into lmdb/leveldb format,
 # depending on the value assigned to $BACKEND.
 
